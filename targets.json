@@ -1,0 +1,23 @@
+{
+  "targets": [
+    {
+      "id": "openai-chatgpt-vscode",
+      "name": "Codex – OpenAI’s coding agent",
+      "source": {
+        "type": "vs_code_marketplace",
+        "publisher": "openai",
+        "extension": "chatgpt",
+        "itemUrl": "https://marketplace.visualstudio.com/items?itemName=openai.chatgpt",
+        "includeStable": true,
+        "includePrerelease": true
+      },
+      "notify": {
+        "issueTitle": "[Release Detection] openai.chatgpt",
+        "labels": [
+          "release-detection",
+          "automated"
+        ]
+      }
+    }
+  ]
+}
