@@ -9,6 +9,12 @@
   - URL: https://marketplace.visualstudio.com/items?itemName=openai.chatgpt
   - Channel policy: track both `stable` and `prerelease`
   - Current API result: only `prerelease` is exposed at the moment
+- `Codex`
+  - Source: Microsoft Store Web
+  - URL: https://apps.microsoft.com/detail/9plm9xgg6vks?hl=en-US&gl=US
+  - Change signal: `packageLastUpdateDateUtc`
+  - Current page metadata: `packageLastUpdateDateUtc=2026-04-11T02:40:01Z`
+  - Note: Microsoft Store page currently does not expose a concrete app version string
 
 ## 工作方式
 
@@ -33,6 +39,7 @@
 在 `targets.json` 中新增配置项。目前支持:
 
 - `vs_code_marketplace`
+- `microsoft_store_web`
 
 示例:
 
@@ -50,6 +57,21 @@
   },
   "notify": {
     "issueTitle": "[Release Detection] publisher-name.extension-name",
+    "labels": ["release-detection", "automated"]
+  }
+}
+```
+
+```json
+{
+  "id": "example-msstore-app",
+  "name": "Example App",
+  "source": {
+    "type": "microsoft_store_web",
+    "productUrl": "https://apps.microsoft.com/detail/<product-id>?hl=en-US&gl=US"
+  },
+  "notify": {
+    "issueTitle": "[Release Detection] Microsoft Store Example App",
     "labels": ["release-detection", "automated"]
   }
 }

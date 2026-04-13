@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -111,6 +112,34 @@ def http_json(
     try:
         with request.urlopen(req) as response:
             return json.loads(response.read().decode("utf-8"))
+    except error.HTTPError as exc:
+        payload = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code} {url}: {payload}") from exc
+
+
+def http_text(
+    method: str, url: str, *, headers: dict[str, str] | None = None
+) -> str:
+    """Send an HTTP request and decode a text response.
+
+    @param method HTTP method.
+    @param url Target URL.
+    @param headers Request headers.
+    @returns Decoded text body.
+    """
+
+    request_headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "User-Agent": "release-detection-ci",
+    }
+    if headers:
+        request_headers.update(headers)
+
+    req = request.Request(url, headers=request_headers, method=method)
+    try:
+        with request.urlopen(req) as response:
+            charset = response.headers.get_content_charset("utf-8")
+            return response.read().decode(charset, errors="replace")
     except error.HTTPError as exc:
         payload = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"HTTP {exc.code} {url}: {payload}") from exc
@@ -242,6 +271,63 @@ def query_vs_code_marketplace(target: dict[str, object]) -> TargetSnapshot:
         name=str(target["name"]),
         source_url=source_url,
         channels=channels,
+    )
+
+
+def extract_embedded_json(html: str, variable_name: str) -> dict[str, object]:
+    """Extract a JSON object assigned to a window variable in HTML.
+
+    @param html HTML document text.
+    @param variable_name Window variable name.
+    @returns Parsed JSON object.
+    """
+
+    pattern = rf"window\.{re.escape(variable_name)}\s*=\s*(\{{.*?\}});"
+    match = re.search(pattern, html, flags=re.DOTALL)
+    if match is None:
+        raise ValueError(f"Could not find window.{variable_name} in the HTML payload.")
+    return json.loads(match.group(1))
+
+
+def query_microsoft_store_web(target: dict[str, object]) -> TargetSnapshot:
+    """Query product metadata embedded in a Microsoft Store web page.
+
+    @param target Target config entry.
+    @returns Latest release signal for the target.
+    """
+
+    source = target.get("source")
+    if not isinstance(source, dict):
+        raise ValueError(f"Target '{target.get('id')}' is missing a 'source' object.")
+
+    product_url = str(source["productUrl"])
+    html = http_text("GET", product_url)
+    page_metadata = extract_embedded_json(html, "pageMetadata")
+
+    package_last_update = page_metadata.get("packageLastUpdateDateUtc")
+    release_date = page_metadata.get("releaseDateUtc")
+    if not isinstance(package_last_update, str) or not package_last_update:
+        raise ValueError(
+            f"Microsoft Store page did not expose packageLastUpdateDateUtc for '{product_url}'."
+        )
+
+    parsed_package_update = parse_iso8601(package_last_update)
+    signal = to_iso8601(parsed_package_update)
+
+    version_suffix = ""
+    if isinstance(release_date, str) and release_date:
+        version_suffix = f" (releaseDateUtc={to_iso8601(parse_iso8601(release_date))})"
+
+    return TargetSnapshot(
+        target_id=str(target["id"]),
+        name=str(target["name"]),
+        source_url=product_url,
+        channels={
+            "stable": ChannelRelease(
+                version=f"packageLastUpdateDateUtc={signal}{version_suffix}",
+                last_updated=signal,
+            )
+        },
     )
 
 
@@ -599,6 +685,8 @@ def detect_snapshot(target: dict[str, object]) -> TargetSnapshot:
     source_type = str(source.get("type"))
     if source_type == "vs_code_marketplace":
         return query_vs_code_marketplace(target)
+    if source_type == "microsoft_store_web":
+        return query_microsoft_store_web(target)
     raise ValueError(f"Unsupported source type: {source_type}")
 
 

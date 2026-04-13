@@ -18,6 +18,21 @@
           "automated"
         ]
       }
+    },
+    {
+      "id": "openai-codex-msstore",
+      "name": "Codex",
+      "source": {
+        "type": "microsoft_store_web",
+        "productUrl": "https://apps.microsoft.com/detail/9plm9xgg6vks?hl=en-US&gl=US"
+      },
+      "notify": {
+        "issueTitle": "[Release Detection] Microsoft Store Codex",
+        "labels": [
+          "release-detection",
+          "automated"
+        ]
+      }
     }
   ]
 }
