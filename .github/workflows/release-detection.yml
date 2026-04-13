@@ -2,8 +2,16 @@ name: Release Detection
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release-detection.yml"
+      - "scripts/release_detection.py"
+      - "targets.json"
   schedule:
-    - cron: "17 * * * *"
+    - cron: "40 * * * *"
+      timezone: "Asia/Shanghai"
 
 permissions:
   contents: read
@@ -26,6 +34,15 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Print trigger context
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "schedule=${{ github.event.schedule || 'n/a' }}"
+          echo "ref=${{ github.ref }}"
+          echo "sha=${{ github.sha }}"
+          echo "utc_now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M:%S %Z'
 
       - name: Detect new releases
         env:
