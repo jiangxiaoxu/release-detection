@@ -333,10 +333,13 @@ def query_microsoft_store_web(target: dict[str, object]) -> TargetSnapshot:
     )
 
 
-def query_github_releases(target: dict[str, object]) -> TargetSnapshot:
+def query_github_releases(
+    target: dict[str, object], token: str = ""
+) -> TargetSnapshot:
     """Query the latest published full release from GitHub Releases.
 
     @param target Target config entry.
+    @param token Optional GitHub token for authenticated upstream API requests.
     @returns Latest stable release for the target repository.
     """
 
@@ -352,10 +355,7 @@ def query_github_releases(target: dict[str, object]) -> TargetSnapshot:
     response = http_json(
         "GET",
         f"{GITHUB_API_BASE}/repos/{owner}/{repo}/releases/latest",
-        headers={
-            "Accept": GITHUB_API_ACCEPT,
-            "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        },
+        headers=github_headers(token),
     )
 
     if response.get("draft") is True or response.get("prerelease") is True:
@@ -489,18 +489,20 @@ def format_change_comment(
     return "\n".join(lines)
 
 
-def github_headers(token: str) -> dict[str, str]:
+def github_headers(token: str = "") -> dict[str, str]:
     """Build GitHub API headers.
 
     @param token GitHub token.
     @returns HTTP headers for the GitHub REST API.
     """
 
-    return {
+    headers = {
         "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {token}",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
 
 
 def ensure_labels(owner: str, repo: str, token: str, labels: list[str]) -> None:
@@ -730,10 +732,11 @@ def ensure_tracking_issue(
     print(f"Posted update comment to issue #{issue_number} for {snapshot.target_id}.")
 
 
-def detect_snapshot(target: dict[str, object]) -> TargetSnapshot:
+def detect_snapshot(target: dict[str, object], token: str = "") -> TargetSnapshot:
     """Dispatch to the correct source handler.
 
     @param target Target config entry.
+    @param token Optional GitHub token for authenticated upstream API requests.
     @returns Latest detected snapshot.
     """
 
@@ -747,7 +750,7 @@ def detect_snapshot(target: dict[str, object]) -> TargetSnapshot:
     if source_type == "microsoft_store_web":
         return query_microsoft_store_web(target)
     if source_type == "github_releases":
-        return query_github_releases(target)
+        return query_github_releases(target, token)
     raise ValueError(f"Unsupported source type: {source_type}")
 
 
@@ -774,7 +777,7 @@ def main() -> int:
         owner, repo = repository.split("/", 1)
 
     for target in targets:
-        snapshot = detect_snapshot(target)
+        snapshot = detect_snapshot(target, token)
         print(f"Detected {snapshot.target_id}:")
         for channel, release in sorted(snapshot.channels.items()):
             print(
