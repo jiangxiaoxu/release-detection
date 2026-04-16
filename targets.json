@@ -12,7 +12,7 @@
         "includePrerelease": true
       },
       "notify": {
-        "issueTitle": "[Release Detection] openai.chatgpt",
+        "issueTitle": "[Release Detection] vscode.Codex",
         "labels": [
           "release-detection",
           "automated"
@@ -44,7 +44,7 @@
         "releasesUrl": "https://github.com/openai/codex/releases"
       },
       "notify": {
-        "issueTitle": "[Release Detection] openai/codex releases",
+        "issueTitle": "[Release Detection] codex cli releases",
         "labels": [
           "release-detection",
           "automated"
