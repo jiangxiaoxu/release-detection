@@ -15,6 +15,11 @@
   - Change signal: `packageLastUpdateDateUtc`
   - Current page metadata: `packageLastUpdateDateUtc=2026-04-11T02:40:01Z`
   - Note: Microsoft Store page currently does not expose a concrete app version string
+- `Codex CLI`
+  - Source: GitHub Releases
+  - URL: https://github.com/openai/codex/releases
+  - Channel policy: track only published full releases
+  - Version signal: `tag_name`
 
 ## 工作方式
 
@@ -40,6 +45,7 @@
 
 - `vs_code_marketplace`
 - `microsoft_store_web`
+- `github_releases`
 
 示例:
 
@@ -72,6 +78,23 @@
   },
   "notify": {
     "issueTitle": "[Release Detection] Microsoft Store Example App",
+    "labels": ["release-detection", "automated"]
+  }
+}
+```
+
+```json
+{
+  "id": "example-github-release",
+  "name": "Example CLI",
+  "source": {
+    "type": "github_releases",
+    "owner": "owner-name",
+    "repo": "repo-name",
+    "releasesUrl": "https://github.com/owner-name/repo-name/releases"
+  },
+  "notify": {
+    "issueTitle": "[Release Detection] owner-name/repo-name releases",
     "labels": ["release-detection", "automated"]
   }
 }

@@ -33,6 +33,23 @@
           "automated"
         ]
       }
+    },
+    {
+      "id": "openai-codex-cli-github",
+      "name": "Codex CLI",
+      "source": {
+        "type": "github_releases",
+        "owner": "openai",
+        "repo": "codex",
+        "releasesUrl": "https://github.com/openai/codex/releases"
+      },
+      "notify": {
+        "issueTitle": "[Release Detection] openai/codex releases",
+        "labels": [
+          "release-detection",
+          "automated"
+        ]
+      }
     }
   ]
 }

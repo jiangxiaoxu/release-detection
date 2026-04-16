@@ -19,6 +19,8 @@ MARKER_START: Final[str] = "<!-- release-detection-state"
 MARKER_END: Final[str] = "-->"
 DEFAULT_CONFIG_PATH: Final[Path] = Path("targets.json")
 GITHUB_API_BASE: Final[str] = "https://api.github.com"
+GITHUB_API_ACCEPT: Final[str] = "application/vnd.github+json"
+GITHUB_API_VERSION: Final[str] = "2022-11-28"
 MARKETPLACE_API_URL: Final[str] = (
     "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery"
 )
@@ -326,6 +328,63 @@ def query_microsoft_store_web(target: dict[str, object]) -> TargetSnapshot:
             "stable": ChannelRelease(
                 version=f"packageLastUpdateDateUtc={signal}{version_suffix}",
                 last_updated=signal,
+            )
+        },
+    )
+
+
+def query_github_releases(target: dict[str, object]) -> TargetSnapshot:
+    """Query the latest published full release from GitHub Releases.
+
+    @param target Target config entry.
+    @returns Latest stable release for the target repository.
+    """
+
+    source = target.get("source")
+    if not isinstance(source, dict):
+        raise ValueError(f"Target '{target.get('id')}' is missing a 'source' object.")
+
+    owner = str(source["owner"])
+    repo = str(source["repo"])
+    releases_url = str(
+        source.get("releasesUrl", f"https://github.com/{owner}/{repo}/releases")
+    )
+    response = http_json(
+        "GET",
+        f"{GITHUB_API_BASE}/repos/{owner}/{repo}/releases/latest",
+        headers={
+            "Accept": GITHUB_API_ACCEPT,
+            "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        },
+    )
+
+    if response.get("draft") is True or response.get("prerelease") is True:
+        raise ValueError(
+            f"GitHub latest release endpoint returned a non-stable release for '{owner}/{repo}'."
+        )
+
+    tag_name = response.get("tag_name")
+    if not isinstance(tag_name, str) or not tag_name:
+        raise ValueError(
+            f"GitHub Releases did not expose a tag_name for '{owner}/{repo}'."
+        )
+
+    published_at = response.get("published_at")
+    created_at = response.get("created_at")
+    timestamp = published_at if isinstance(published_at, str) and published_at else created_at
+    if not isinstance(timestamp, str) or not timestamp:
+        raise ValueError(
+            f"GitHub Releases did not expose a usable timestamp for '{owner}/{repo}'."
+        )
+
+    return TargetSnapshot(
+        target_id=str(target["id"]),
+        name=str(target["name"]),
+        source_url=releases_url,
+        channels={
+            "stable": ChannelRelease(
+                version=tag_name,
+                last_updated=to_iso8601(parse_iso8601(timestamp)),
             )
         },
     )
@@ -687,6 +746,8 @@ def detect_snapshot(target: dict[str, object]) -> TargetSnapshot:
         return query_vs_code_marketplace(target)
     if source_type == "microsoft_store_web":
         return query_microsoft_store_web(target)
+    if source_type == "github_releases":
+        return query_github_releases(target)
     raise ValueError(f"Unsupported source type: {source_type}")
 
 
