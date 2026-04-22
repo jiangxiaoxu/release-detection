@@ -715,16 +715,16 @@ def verify_msix_authenticode(path: Path) -> str:
             "Microsoft Store MSIX publishing requires Windows with PowerShell for Get-AuthenticodeSignature."
         )
 
+    literal_path = str(path).replace("'", "''")
     command = [
         powershell,
         "-NoProfile",
         "-Command",
-        "$sig = Get-AuthenticodeSignature -LiteralPath $args[0]; "
+        f"$sig = Get-AuthenticodeSignature -LiteralPath '{literal_path}'; "
         "if ($sig.Status -ne 'Valid') { "
         "Write-Error \"AuthenticodeSignature status is $($sig.Status)\"; exit 1 "
         "} "
         "Write-Output $sig.Status",
-        str(path),
     ]
     completed = subprocess.run(
         command,
