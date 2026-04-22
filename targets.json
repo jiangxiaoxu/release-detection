@@ -32,6 +32,13 @@
           "release-detection",
           "automated"
         ]
+      },
+      "release": {
+        "enabled": true,
+        "channel": "stable",
+        "tagPrefix": "msstore-codex-v",
+        "nameTemplate": "Microsoft Store Codex {version}",
+        "retentionDays": 30
       }
     },
     {

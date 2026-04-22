@@ -14,7 +14,7 @@ on:
       timezone: "Asia/Shanghai"
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 concurrency:
@@ -23,7 +23,7 @@ concurrency:
 
 jobs:
   detect:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
@@ -37,12 +37,12 @@ jobs:
 
       - name: Print trigger context
         run: |
-          echo "event_name=${{ github.event_name }}"
-          echo "schedule=${{ github.event.schedule || 'n/a' }}"
-          echo "ref=${{ github.ref }}"
-          echo "sha=${{ github.sha }}"
-          echo "utc_now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          TZ=Asia/Shanghai date +'%Y-%m-%d %H:%M:%S %Z'
+          "event_name=${{ github.event_name }}"
+          "schedule=${{ github.event.schedule || 'n/a' }}"
+          "ref=${{ github.ref }}"
+          "sha=${{ github.sha }}"
+          "utc_now=$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ'))"
+          "china_now=$([System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId((Get-Date), 'China Standard Time').ToString('yyyy-MM-dd HH:mm:ss')) China Standard Time"
 
       - name: Detect new releases
         env:
