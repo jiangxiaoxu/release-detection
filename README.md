@@ -15,8 +15,6 @@
   - Version signal: DisplayCatalog `PackageFullName` package version
   - Fallback signal: `packageLastUpdateDateUtc`
   - Current detected version: `26.421.620.0`
-  - Publish: when `stable` changes, resolve the temporary MSIX link via rg-adguard, verify the Microsoft CDN download, and upload the MSIX to `msstore-codex-v<version>`
-  - Retention: delete Microsoft Store Codex releases and tags older than 30 days during CI
 - `Codex CLI`
   - Source: GitHub Releases
   - URL: https://github.com/openai/codex/releases
@@ -32,10 +30,7 @@
 5. 当检测到版本变化时:
    - 更新 tracking issue body 中的隐藏状态
    - 追加一条新 comment
-   - 对启用 release publish 的 Microsoft Store target,下载并校验 MSIX,然后上传到按版本创建的 GitHub Release
-6. Microsoft Store 的下载链接只作为临时解析来源,长期可用的包保存在本仓库 GitHub Release asset.
-7. CI 会删除超过保留期的 Microsoft Store Codex release 和 tag,默认只保留最近 30 天.
-8. 订阅仓库或订阅该 issue 的用户会收到 GitHub 通知邮件.
+6. 订阅仓库或订阅该 issue 的用户会收到 GitHub 通知邮件.
 
 ## 初始化
 
@@ -85,13 +80,6 @@
   "notify": {
     "issueTitle": "[Release Detection] Microsoft Store Example App",
     "labels": ["release-detection", "automated"]
-  },
-  "release": {
-    "enabled": true,
-    "channel": "stable",
-    "tagPrefix": "msstore-codex-v",
-    "nameTemplate": "Microsoft Store Codex {version}",
-    "retentionDays": 30
   }
 }
 ```

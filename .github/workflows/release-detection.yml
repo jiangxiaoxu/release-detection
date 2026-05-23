@@ -14,7 +14,7 @@ on:
       timezone: "Asia/Shanghai"
 
 permissions:
-  contents: write
+  contents: read
   issues: write
 
 concurrency:
