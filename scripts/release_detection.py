@@ -948,30 +948,35 @@ def ensure_tracking_issue(
         print(f"[dry-run] would upsert tracking issue: {title}")
         return []
 
-    ensure_labels(owner, repo, token, labels)
-    issues = list_tracking_issues(owner, repo, token, primary_label)
-    issue = find_tracking_issue(issues, title)
-    if issue is None:
-        created = create_issue(owner, repo, token, title, body, labels)
-        issue_number = created.get("number")
-        print(f"Created tracking issue #{issue_number} for {snapshot.target_id}.")
-        return diff_channels(None, snapshot)
+    try:
+        ensure_labels(owner, repo, token, labels)
+        issues = list_tracking_issues(owner, repo, token, primary_label)
+        issue = find_tracking_issue(issues, title)
+        if issue is None:
+            created = create_issue(owner, repo, token, title, body, labels)
+            issue_number = created.get("number")
+            print(f"Created tracking issue #{issue_number} for {snapshot.target_id}.")
+            return diff_channels(None, snapshot)
 
-    raw_number = issue.get("number")
-    if not isinstance(raw_number, int):
-        raise ValueError(f"Issue '{title}' is missing a numeric issue number.")
-    issue_number = raw_number
-    previous_state = extract_issue_state(str(issue.get("body", "")))
-    changes = diff_channels(previous_state, snapshot)
-    if not changes:
-        print(f"No new version for {snapshot.target_id}.")
-        return []
+        raw_number = issue.get("number")
+        if not isinstance(raw_number, int):
+            raise ValueError(f"Issue '{title}' is missing a numeric issue number.")
+        issue_number = raw_number
+        previous_state = extract_issue_state(str(issue.get("body", "")))
+        changes = diff_channels(previous_state, snapshot)
+        if not changes:
+            print(f"No new version for {snapshot.target_id}.")
+            return []
 
-    update_issue(owner, repo, token, issue_number, body)
-    comment = format_change_comment(snapshot, changes)
-    create_issue_comment(owner, repo, token, issue_number, comment)
-    print(f"Posted update comment to issue #{issue_number} for {snapshot.target_id}.")
-    return changes
+        update_issue(owner, repo, token, issue_number, body)
+        comment = format_change_comment(snapshot, changes)
+        create_issue_comment(owner, repo, token, issue_number, comment)
+        print(f"Posted update comment to issue #{issue_number} for {snapshot.target_id}.")
+        return changes
+    except RuntimeError as exc:
+        if is_github_bad_credentials_error(exc):
+            return []
+        raise
 
 
 def detect_snapshot(target: dict[str, object], token: str = "") -> TargetSnapshot:
