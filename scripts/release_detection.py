@@ -4,12 +4,16 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
+import ssl
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Final
 from urllib import error, parse, request
@@ -28,6 +32,24 @@ MICROSOFT_STORE_DISPLAY_CATALOG_URL: Final[str] = (
 )
 MICROSOFT_STORE_PACKAGE_VERSION_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"^[^_]+_([0-9]+(?:\.[0-9]+){3})_"
+)
+HTTP_TIMEOUT_SECONDS: Final[float] = 30.0
+HTTP_MAX_ATTEMPTS: Final[int] = 4
+HTTP_BACKOFF_BASE_SECONDS: Final[float] = 1.0
+HTTP_MAX_RETRY_DELAY_SECONDS: Final[float] = 60.0
+RETRYABLE_HTTP_STATUS_CODES: Final[frozenset[int]] = frozenset(
+    {429, 500, 502, 503, 504}
+)
+RETRYABLE_HTTP_METHODS: Final[frozenset[str]] = frozenset(
+    {"DELETE", "GET", "HEAD", "OPTIONS", "PUT"}
+)
+TRANSIENT_NETWORK_ERRORS: Final[tuple[type[BaseException], ...]] = (
+    error.URLError,
+    TimeoutError,
+    ConnectionError,
+    ssl.SSLError,
+    OSError,
+    http.client.HTTPException,
 )
 
 
@@ -55,6 +77,14 @@ class MicrosoftStoreCatalogRelease:
 
     version: str
     last_updated: str | None
+
+
+@dataclass(frozen=True)
+class HttpResponseData:
+    """Raw HTTP response data read within the retry boundary."""
+
+    body: bytes
+    charset: str | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,19 +125,130 @@ def load_config(config_path: Path) -> list[dict[str, object]]:
     return targets
 
 
+def parse_retry_after(value: str | None) -> float | None:
+    """Parse a Retry-After header as a non-negative delay in seconds.
+
+    @param value Retry-After delta-seconds or HTTP-date value.
+    @returns Delay in seconds, or None when the header is absent or invalid.
+    """
+
+    if value is None:
+        return None
+    stripped = value.strip()
+    try:
+        if stripped.isdigit():
+            return float(int(stripped))
+        retry_at = parsedate_to_datetime(stripped)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    try:
+        return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+    except OverflowError:
+        return None
+
+
+def retry_delay(attempt: int, retry_after: str | None) -> float:
+    """Calculate a capped exponential retry delay.
+
+    @param attempt One-based number of the failed attempt.
+    @param retry_after Optional Retry-After response header.
+    @returns Delay before the next attempt in seconds.
+    """
+
+    exponential_delay = HTTP_BACKOFF_BASE_SECONDS * (2 ** (attempt - 1))
+    server_delay = parse_retry_after(retry_after)
+    requested_delay = max(exponential_delay, server_delay or 0.0)
+    return min(requested_delay, HTTP_MAX_RETRY_DELAY_SECONDS)
+
+
+def read_http_error_payload(exc: error.HTTPError) -> str:
+    """Read as much of an HTTP error response body as is available.
+
+    @param exc HTTP error response.
+    @returns Decoded response body, including a partial body when truncated.
+    """
+
+    try:
+        payload = exc.read()
+    except http.client.IncompleteRead as read_error:
+        payload = read_error.partial
+        suffix = f" [response body truncated: {read_error}]"
+        return payload.decode("utf-8", errors="replace") + suffix
+    except TRANSIENT_NETWORK_ERRORS as read_error:
+        return (
+            "<response body unavailable: "
+            f"{type(read_error).__name__}: {read_error}>"
+        )
+    return payload.decode("utf-8", errors="replace")
+
+
+def open_with_retry(
+    req: request.Request,
+    url: str,
+    *,
+    retry_transient: bool,
+) -> HttpResponseData:
+    """Open an HTTP request with timeout and bounded transient retries.
+
+    @param req Prepared URL request.
+    @param url Target URL used in diagnostics.
+    @param retry_transient Whether this operation is safe to retry.
+    @returns Raw response body and declared charset.
+    """
+
+    max_attempts = HTTP_MAX_ATTEMPTS if retry_transient else 1
+    for attempt in range(1, max_attempts + 1):
+        try:
+            with request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                response_body = response.read()
+                charset = response.headers.get_content_charset()
+                return HttpResponseData(body=response_body, charset=charset)
+        except error.HTTPError as exc:
+            payload = read_http_error_payload(exc)
+            retryable = exc.code in RETRYABLE_HTTP_STATUS_CODES
+            if not retryable or attempt == max_attempts:
+                raise RuntimeError(f"HTTP {exc.code} {url}: {payload}") from exc
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            delay = retry_delay(attempt, retry_after)
+            print(
+                f"Transient HTTP {exc.code} for {url}; "
+                f"retrying in {delay:g}s ({attempt}/{max_attempts}).",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+        except TRANSIENT_NETWORK_ERRORS as exc:
+            if attempt == max_attempts:
+                raise RuntimeError(
+                    f"HTTP request failed for {url} after {attempt} attempt(s): {exc}"
+                ) from exc
+            delay = retry_delay(attempt, None)
+            print(
+                f"Transient HTTP failure for {url}: {exc}; "
+                f"retrying in {delay:g}s ({attempt}/{max_attempts}).",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+
+    raise AssertionError("HTTP retry loop exited without returning or raising.")
+
+
 def http_json(
     method: str,
     url: str,
     *,
     headers: dict[str, str] | None = None,
     body: dict[str, object] | None = None,
-) -> dict[str, object]:
+    retry_transient: bool | None = None,
+) -> Any:
     """Send an HTTP request and decode a JSON response.
 
     @param method HTTP method.
     @param url Target URL.
     @param headers Request headers.
     @param body Optional JSON body.
+    @param retry_transient Override whether transient failures are retried.
     @returns Decoded JSON object.
     """
 
@@ -123,22 +264,32 @@ def http_json(
         request_headers["Content-Type"] = "application/json"
 
     req = request.Request(url, data=encoded_body, headers=request_headers, method=method)
-    try:
-        with request.urlopen(req) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except error.HTTPError as exc:
-        payload = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code} {url}: {payload}") from exc
+    should_retry = (
+        method.upper() in RETRYABLE_HTTP_METHODS
+        if retry_transient is None
+        else retry_transient
+    )
+    response = open_with_retry(
+        req,
+        url,
+        retry_transient=should_retry,
+    )
+    return json.loads(response.body.decode("utf-8"))
 
 
 def http_text(
-    method: str, url: str, *, headers: dict[str, str] | None = None
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    retry_transient: bool | None = None,
 ) -> str:
     """Send an HTTP request and decode a text response.
 
     @param method HTTP method.
     @param url Target URL.
     @param headers Request headers.
+    @param retry_transient Override whether transient failures are retried.
     @returns Decoded text body.
     """
 
@@ -150,13 +301,18 @@ def http_text(
         request_headers.update(headers)
 
     req = request.Request(url, headers=request_headers, method=method)
-    try:
-        with request.urlopen(req) as response:
-            charset = response.headers.get_content_charset("utf-8")
-            return response.read().decode(charset, errors="replace")
-    except error.HTTPError as exc:
-        payload = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code} {url}: {payload}") from exc
+    should_retry = (
+        method.upper() in RETRYABLE_HTTP_METHODS
+        if retry_transient is None
+        else retry_transient
+    )
+
+    response = open_with_retry(
+        req,
+        url,
+        retry_transient=should_retry,
+    )
+    return response.body.decode(response.charset or "utf-8", errors="replace")
 
 
 def github_json(
@@ -230,6 +386,7 @@ def query_vs_code_marketplace(target: dict[str, object]) -> TargetSnapshot:
             "assetTypes": [],
             "flags": 914,
         },
+        retry_transient=True,
     )
 
     results = response.get("results")
@@ -746,13 +903,20 @@ def github_headers(token: str = "") -> dict[str, str]:
     return headers
 
 
-def ensure_labels(owner: str, repo: str, token: str, labels: list[str]) -> None:
+def ensure_labels(
+    owner: str,
+    repo: str,
+    token: str,
+    labels: list[str],
+    ensured_labels: set[str],
+) -> None:
     """Ensure all issue labels exist.
 
     @param owner Repository owner.
     @param repo Repository name.
     @param token GitHub token.
     @param labels Label names to ensure.
+    @param ensured_labels Labels already ensured during this process.
     @returns None
     """
 
@@ -760,7 +924,9 @@ def ensure_labels(owner: str, repo: str, token: str, labels: list[str]) -> None:
         "release-detection": "0E8A16",
         "automated": "1D76DB",
     }
-    for label in labels:
+    for label in dict.fromkeys(labels):
+        if label in ensured_labels:
+            continue
         try:
             http_json(
                 "POST",
@@ -771,10 +937,12 @@ def ensure_labels(owner: str, repo: str, token: str, labels: list[str]) -> None:
                     "color": color_map.get(label, "5319E7"),
                     "description": "Managed by the release detection workflow.",
                 },
+                retry_transient=True,
             )
         except RuntimeError as exc:
             if "already_exists" not in str(exc):
                 raise
+        ensured_labels.add(label)
 
 
 def list_tracking_issues(
@@ -922,6 +1090,7 @@ def ensure_tracking_issue(
     target: dict[str, object],
     snapshot: TargetSnapshot,
     dry_run: bool,
+    ensured_labels: set[str],
 ) -> list[tuple[str, str | None, str]]:
     """Create or update the target tracking issue.
 
@@ -931,6 +1100,7 @@ def ensure_tracking_issue(
     @param target Target config entry.
     @param snapshot Latest detected snapshot.
     @param dry_run When true, print actions without mutating GitHub.
+    @param ensured_labels Labels already ensured during this process.
     @returns Changed channels with previous and current versions.
     """
 
@@ -949,7 +1119,7 @@ def ensure_tracking_issue(
         return []
 
     try:
-        ensure_labels(owner, repo, token, labels)
+        ensure_labels(owner, repo, token, labels, ensured_labels)
         issues = list_tracking_issues(owner, repo, token, primary_label)
         issue = find_tracking_issue(issues, title)
         if issue is None:
@@ -1023,6 +1193,7 @@ def main() -> int:
     if repository:
         owner, repo = repository.split("/", 1)
 
+    ensured_labels: set[str] = set()
     for target in targets:
         snapshot = detect_snapshot(target, token)
         print(f"Detected {snapshot.target_id}:")
@@ -1030,7 +1201,15 @@ def main() -> int:
             print(
                 f"  - {channel}: version={release.version}, last_updated={release.last_updated}"
             )
-        ensure_tracking_issue(owner, repo, token, target, snapshot, args.dry_run)
+        ensure_tracking_issue(
+            owner,
+            repo,
+            token,
+            target,
+            snapshot,
+            args.dry_run,
+            ensured_labels,
+        )
 
     return 0
 

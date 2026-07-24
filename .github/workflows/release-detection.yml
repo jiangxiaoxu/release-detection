@@ -8,6 +8,7 @@ on:
     paths:
       - ".github/workflows/release-detection.yml"
       - "scripts/release_detection.py"
+      - "tests/**"
       - "targets.json"
   schedule:
     - cron: "40 * * * *"
@@ -24,6 +25,7 @@ concurrency:
 jobs:
   detect:
     runs-on: windows-latest
+    timeout-minutes: 15
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
@@ -34,6 +36,9 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
 
       - name: Print trigger context
         run: |
